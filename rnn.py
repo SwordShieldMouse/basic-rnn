@@ -6,6 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
+from torch.utils.data import Dataset, DataLoader
 
 dtype = torch.float
 
@@ -40,7 +41,22 @@ class RNN(nn.Module):
         self.s = torch.zeros(1, self.hidden_size, dtype = dtype, requires_grad = False)
 
 
-# Dataset
+# TODO: Clean up dataset; have an array with rows as (line, category) rather than a dict structure
+class Names(Dataset):
+    def __init__(self):
+        self.data = []
+        for filename in glob.glob("data/names/*.txt"):
+            category = os.path.basename(filename).split('.')[0]
+            with open(filename, encoding = 'utf-8') as file:
+                for line in file:
+                    #print(line)
+                    self.data.append([unicode_to_ascii(line.strip()), category])
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, ix):
+        return self.data[ix]
 
 def find_files(path):
     return glob.glob(path)
@@ -110,8 +126,8 @@ def rand_training_example():
 #input = line_to_tensor("Alan")
 
 n_hidden = 128
-epochs = 10
-n_iters = 5000
+epochs = 4
+#n_iters = 5000
 learning_rate = 1e-4
 
 rnn = RNN(n_letters, n_hidden, n_categories)
@@ -121,20 +137,40 @@ rnn = RNN(n_letters, n_hidden, n_categories)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(rnn.parameters(), lr = learning_rate)
 
-for _ in range(n_iters):
-    line, y = rand_training_example()
-    rnn.reset_hidden()
 
-    # run through the characters in the line
-    y_pred = torch.zeros(1, n_categories)
-    for character in line:
-        #print(character)
-        y_pred = rnn(character)
+data = Names()
 
-    loss = criterion(y_pred, y)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+# training, test sets
+train_size = int(0.8 * len(data))
+test_size = len(data) - train_size
+train_data, test_data = torch.utils.data.random_split(data, [train_size, test_size])
+
+trainloader = DataLoader(train_data, batch_size = 10, shuffle = True)
+testloader = DataLoader(test_data, shuffle = True)
+
+# train the rnn
+for _ in range(epochs):
+    for line, y in trainloader:
+        rnn.reset_hidden()
+
+        y_pred = torch.zeros(len(line), n_categories)
+
+        for ix in range(len(line)):
+            x = line_to_tensor(line[ix])
+            #print(x)
+            rnn.reset_hidden()
+            for char in x:
+                #print(char)
+                y_pred[ix] = rnn(char)
+
+        #print(category_to_tensor(y))
+        # convert categories to tensors
+        y = torch.tensor([all_categories.index(category) for category in y])
+        #print(y)
+        loss = criterion(y_pred, y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
 # test it
 def evaluate(line_tensor):
@@ -143,4 +179,11 @@ def evaluate(line_tensor):
         y_pred = rnn(character)
     return y_pred
 
-print(category_from_output(evaluate(line_to_tensor("Davis"))))
+#print(category_from_output(evaluate(line_to_tensor("Davis"))))
+hits = 0
+for line, y in testloader:
+    y_pred = category_from_output(evaluate(line_to_tensor(line)))
+    if y_pred[0] == y:
+        hits += 1
+
+print("accuracy on test set was: " + str(hits / len(test_data)))
