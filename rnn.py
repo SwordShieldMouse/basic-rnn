@@ -10,10 +10,10 @@ from torch.utils.data import Dataset, DataLoader
 
 dtype = torch.float
 
-# the rnn
-class RNN(nn.Module):
+# the rnn for name classification
+class Classification_RNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
-        super(RNN, self).__init__()
+        super(Classification_RNN, self).__init__()
 
         self.hidden_size = hidden_size
         self.output_size = output_size
@@ -40,6 +40,39 @@ class RNN(nn.Module):
     def reset_hidden(self):
         self.s = torch.zeros(1, self.hidden_size, dtype = dtype, requires_grad = False)
 
+class Generative_RNN(nn.module):
+    # generates a name character by character when give a category and a starting character
+    def __init__(self, category_size, input_size, hidden_size1, hidden_size2, output_size):
+        super(Generative_RNN, self).__init__()
+
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.input_size = input_size
+
+        self.dropout = nn.Dropout(p = 0.1)
+
+        # hidden layers
+        self.hidden1 = nn.Linear(category_size + input_size + hidden_size1, hidden_size1)
+        self.hidden2 = nn.Linear(category_size + hidden_size1 + hidden_size2, hidden_size2)
+        self.hidden3 = nn.Linear(hidden_size2, output_size)
+
+        # hold the hidden states
+        self.s1 = torch.zeros(1, hidden_size1, dtype = dtype, require_grad = False)
+        self.s2 = torch.zeros(1, hidden_size2, dtype = dtype, require_grad = False)
+
+
+    def forward(self, category, x):
+        self.s1 = F.leaky_relu(self.hidden1(torch.cat(category, x, self.s1)))
+        self.s1 = self.dropout(self.s1)
+        self.s2 = F.leaky_relu(self.hidden2(torch.cat(category, self.s1, self.s2)))
+        self.s2 = self.dropout(self.s2)
+
+        output = self.dropout(self.hidden3(self.s2))
+        return F.softmax(output)
+
+    def reset_hidden(self):
+        self.s1 = torch.zeros(1, self.hidden_size1, dtype = dtype, requires_grad = False)
+        self.s2 = torch.zeros(1, self.hidden_size2, dtype = dtype, requires_grad = False)
 
 # TODO: Clean up dataset; have an array with rows as (line, category) rather than a dict structure
 class Names(Dataset):
@@ -130,7 +163,7 @@ epochs = 4
 #n_iters = 5000
 learning_rate = 1e-4
 
-rnn = RNN(n_letters, n_hidden, n_categories)
+rnn = Classification_RNN(n_letters, n_hidden, n_categories)
 
 #print(rnn(input[0]))
 
