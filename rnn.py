@@ -40,16 +40,17 @@ class Classification_RNN(nn.Module):
     def reset_hidden(self):
         self.s = torch.zeros(1, self.hidden_size, dtype = dtype, requires_grad = False)
 
-class Generative_RNN(nn.module):
+class Generative_RNN(nn.Module):
     # generates a name character by character when give a category and a starting character
     def __init__(self, category_size, input_size, hidden_size1, hidden_size2, output_size):
         super(Generative_RNN, self).__init__()
 
-        self.hidden_size = hidden_size
         self.output_size = output_size
         self.input_size = input_size
+        self.hidden_size1 = hidden_size1
+        self.hidden_size2 = hidden_size2
 
-        self.dropout = nn.Dropout(p = 0.1)
+        self.dropout = nn.Dropout(p = 0.5)
 
         # hidden layers
         self.hidden1 = nn.Linear(category_size + input_size + hidden_size1, hidden_size1)
@@ -57,14 +58,14 @@ class Generative_RNN(nn.module):
         self.hidden3 = nn.Linear(hidden_size2, output_size)
 
         # hold the hidden states
-        self.s1 = torch.zeros(1, hidden_size1, dtype = dtype, require_grad = False)
-        self.s2 = torch.zeros(1, hidden_size2, dtype = dtype, require_grad = False)
+        self.s1 = torch.zeros(1, hidden_size1, dtype = dtype)
+        self.s2 = torch.zeros(1, hidden_size2, dtype = dtype)
 
 
     def forward(self, category, x):
-        self.s1 = F.leaky_relu(self.hidden1(torch.cat(category, x, self.s1)))
+        self.s1 = F.leaky_relu(self.hidden1(torch.cat((category, x, self.s1), 1)))
         self.s1 = self.dropout(self.s1)
-        self.s2 = F.leaky_relu(self.hidden2(torch.cat(category, self.s1, self.s2)))
+        self.s2 = F.leaky_relu(self.hidden2(torch.cat((category, self.s1, self.s2), 1)))
         self.s2 = self.dropout(self.s2)
 
         output = self.dropout(self.hidden3(self.s2))
@@ -74,7 +75,6 @@ class Generative_RNN(nn.module):
         self.s1 = torch.zeros(1, self.hidden_size1, dtype = dtype, requires_grad = False)
         self.s2 = torch.zeros(1, self.hidden_size2, dtype = dtype, requires_grad = False)
 
-# TODO: Clean up dataset; have an array with rows as (line, category) rather than a dict structure
 class Names(Dataset):
     def __init__(self):
         self.data = []
@@ -158,17 +158,20 @@ def rand_training_example():
 
 #input = line_to_tensor("Alan")
 
-n_hidden = 128
-epochs = 4
+n_hidden = 64
+epochs = 2
 #n_iters = 5000
 learning_rate = 1e-4
 
 rnn = Classification_RNN(n_letters, n_hidden, n_categories)
+generator_rnn = Generative_RNN(n_categories, n_letters, n_hidden, n_hidden, n_letters)
 
 #print(rnn(input[0]))
 
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(rnn.parameters(), lr = learning_rate)
+
+generator_optimizer = torch.optim.Adam(generator_rnn.parameters(), lr = learning_rate)
 
 
 data = Names()
@@ -181,10 +184,13 @@ train_data, test_data = torch.utils.data.random_split(data, [train_size, test_si
 trainloader = DataLoader(train_data, batch_size = 10, shuffle = True)
 testloader = DataLoader(test_data, shuffle = True)
 
-# train the rnn
+# train
 for _ in range(epochs):
     for line, y in trainloader:
         rnn.reset_hidden()
+        generator_rnn.reset_hidden()
+
+        generator_loss = 0
 
         y_pred = torch.zeros(len(line), n_categories)
 
@@ -192,14 +198,25 @@ for _ in range(epochs):
             x = line_to_tensor(line[ix])
             #print(x)
             rnn.reset_hidden()
-            for char in x:
+            generator_rnn.reset_hidden()
+            for char_ix, char in enumerate(x):
                 #print(char)
                 y_pred[ix] = rnn(char)
+                next_letter = generator_rnn(category_to_tensor(y[ix]), char)
+
+                # have to do char.find(1) as crossentropy takes a class index for the second argument
+                #print(char[0])
+                generator_loss += criterion(next_letter, (char[0] == 1).nonzero()[0])
 
         #print(category_to_tensor(y))
         # convert categories to tensors
         y = torch.tensor([all_categories.index(category) for category in y])
         #print(y)
+
+        generator_optimizer.zero_grad()
+        generator_loss.backward()
+        generator_optimizer.step()
+
         loss = criterion(y_pred, y)
         optimizer.zero_grad()
         loss.backward()
@@ -219,4 +236,7 @@ for line, y in testloader:
     if y_pred[0] == y:
         hits += 1
 
-print("accuracy on test set was: " + str(hits / len(test_data)))
+print("accuracy on test set for classification was: " + str(hits / len(test_data)))
+
+
+# generate a name
